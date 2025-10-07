@@ -83,7 +83,7 @@ class DatabaseService {
         brand: product.brand,
         barcode: product.barcode,
         url: product.url,
-        image_url: product.image_url,
+        image_url: product.imageUrl || product.image_url, // Handle both field names
         in_stock: product.in_stock !== undefined ? product.in_stock : true,
         scraped_at: new Date(),
         description: product.description,
