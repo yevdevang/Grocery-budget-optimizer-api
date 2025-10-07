@@ -271,27 +271,40 @@ class RamiLevyScraper extends BaseScraper {
     const products = await this.page.evaluate(() => {
       const productElements = [];
       
-      // Try multiple selectors to find product containers
+      // Based on the HTML structure, target div[role="button"] with id starting with "product-"
       const selectors = [
-        '[data-testid*="product"]',
-        '.product',
-        '[class*="product"]',
-        '[class*="item"]',
-        '[data-testid*="item"]',
-        '.card',
-        '[class*="card"]'
+        '.swiper-slide',                       // Primary: swiper slides that contain products
+        '[class*="product"]',                  // Product containers
+        '[class*="item"]',                     // Item containers  
+        '.card',                               // Card containers
+        '[class*="card"]'                      // Any card-like containers
       ];
       
       const foundElements = new Set();
       
       for (const selector of selectors) {
         const elements = document.querySelectorAll(selector);
+        
         elements.forEach(element => {
-          if (!foundElements.has(element)) {
-            foundElements.add(element);
-            productElements.push(element);
+          // Check if this container has a button with id starting with "product-"
+          const barcodeButton = element.querySelector('div[role="button"][id^="product-"]');
+          
+          // Only include containers that have both content and either a barcode button or sufficient product data
+          if (barcodeButton || 
+              (element.textContent?.trim().length > 10 && 
+               (element.querySelector('img') || element.querySelector('[class*="price"]')))) {
+            if (!foundElements.has(element)) {
+              foundElements.add(element);
+              productElements.push(element);
+            }
           }
         });
+        
+        // If we found elements with the primary selector, prioritize those
+        if (selector === 'div[role="button"][id^="product-"]' && elements.length > 0) {
+          console.log(`Found ${elements.length} elements with primary selector`);
+          break;
+        }
       }
       
       console.log(`Found ${productElements.length} potential product elements`);
@@ -359,11 +372,56 @@ class RamiLevyScraper extends BaseScraper {
             }
           }
           
-          // Image URL
+          // Image URL - try multiple approaches to find the product image
+          let imageUrl = null;
+          
+          // Try to find img element within the container
           const imgEl = element.querySelector('img');
           if (imgEl) {
-            product.imageUrl = imgEl.src || imgEl.getAttribute('data-src');
+            imageUrl = imgEl.src || 
+                      imgEl.getAttribute('data-src') || 
+                      imgEl.getAttribute('data-lazy') ||
+                      imgEl.getAttribute('data-original');
           }
+          
+          // If no img found in main element, try looking in specific image wrapper classes
+          if (!imageUrl) {
+            const imageWrappers = [
+              '.product-img-wrap img',
+              '[class*="image"] img', 
+              '[class*="img"] img',
+              '.picture img',
+              '[class*="picture"] img',
+              '.swiper-slide img',  // Try swiper slide images
+              '[data-v-768fbfcf] img', // Try the specific data attribute we saw
+              'div[class*="product"] img' // Try product divs
+            ];
+            
+            for (const selector of imageWrappers) {
+              const img = element.querySelector(selector);
+              if (img) {
+                imageUrl = img.src || 
+                          img.getAttribute('data-src') || 
+                          img.getAttribute('data-lazy') ||
+                          img.getAttribute('data-original');
+                if (imageUrl) break;
+              }
+            }
+          }
+          
+          // Debug: For first few products, show what we're finding
+          if (index < 3) {
+            const allImages = element.querySelectorAll('img');
+            product.debugImages = Array.from(allImages).map(img => ({
+              src: img.src,
+              'data-src': img.getAttribute('data-src'),
+              'data-lazy': img.getAttribute('data-lazy'),
+              className: img.className,
+              parentClass: img.parentElement?.className
+            }));
+          }
+          
+          product.imageUrl = imageUrl;
           
           // Product URL
           const linkEl = element.querySelector('a');
@@ -374,11 +432,127 @@ class RamiLevyScraper extends BaseScraper {
             }
           }
           
-          // Extract ID from various attributes
-          product.id = element.getAttribute('data-id') || 
-                     element.getAttribute('data-product-id') ||
-                     element.getAttribute('id') ||
-                     `product_${index}`;
+          // Extract ID from various attributes - check for button with barcode first
+          let productId = null;
+          let barcode = null;
+          
+          // PRIMARY: Look for button with id="product-{barcode}" within this container
+          const barcodeButton = element.querySelector('div[role="button"][id^="product-"]');
+          if (barcodeButton) {
+            const buttonId = barcodeButton.getAttribute('id');
+            if (buttonId && buttonId.startsWith('product-')) {
+              productId = buttonId;
+              const barcodeFromId = buttonId.replace('product-', '');
+              if (barcodeFromId && barcodeFromId.match(/^\d{8,}$/)) { // 8+ digits for valid barcode
+                barcode = barcodeFromId;
+              }
+            }
+          }
+          
+          // Fallback ID extraction if no button found
+          if (!productId) {
+            const elementId = element.getAttribute('id');
+            productId = elementId || 
+                       element.getAttribute('data-id') || 
+                       element.getAttribute('data-product-id') ||
+                       `product_${index}`;
+          }
+          
+          product.id = productId;
+          
+          // Fallback: Look for explicit barcode attributes
+          if (!barcode) {
+            barcode = element.getAttribute('data-barcode') || 
+                     element.getAttribute('data-ean') ||
+                     element.getAttribute('data-gtin') ||
+                     element.getAttribute('barcode');
+          }
+          
+          // If no explicit barcode, check all possible locations
+          if (!barcode) {
+            // Get all attributes for debugging
+            const allAttributes = {};
+            for (let i = 0; i < element.attributes.length; i++) {
+              const attr = element.attributes[i];
+              allAttributes[attr.name] = attr.value;
+            }
+            
+            // Store attributes for debugging (first few products only)
+            if (index < 3) {
+              product.debugAttributes = allAttributes;
+            }
+            
+            // 1. Check for barcode in any data attribute
+            Object.entries(allAttributes).forEach(([name, value]) => {
+              if (!barcode && value && value.match(/^\d{8,}$/)) {
+                barcode = value;
+              }
+            });
+            
+            // 2. Check in link URLs for product IDs
+            const linkEl = element.querySelector('a[href]');
+            if (!barcode && linkEl) {
+              const href = linkEl.getAttribute('href');
+              if (href) {
+                // Look for patterns like /product/123456 or ?id=123456 or product-123456
+                const urlPatterns = [
+                  /\/product\/(\d{8,})/,
+                  /\/item\/(\d{8,})/,
+                  /[?&]id=(\d{8,})/,
+                  /[?&]product=(\d{8,})/,
+                  /[?&]sku=(\d{8,})/,
+                  /product-(\d{8,})/,
+                  /-(\d{8,})/
+                ];
+                
+                for (const pattern of urlPatterns) {
+                  const match = href.match(pattern);
+                  if (match) {
+                    barcode = match[1];
+                    break;
+                  }
+                }
+                
+                // Store URL for debugging
+                if (index < 3) {
+                  product.debugUrl = href;
+                }
+              }
+            }
+            
+            // 3. Check in all child elements for any element with id containing digits
+            if (!barcode) {
+              const allElements = element.querySelectorAll('*[id]');
+              allElements.forEach(childEl => {
+                if (!barcode) {
+                  const childId = childEl.getAttribute('id');
+                  // Look for patterns like product-123456 in any child element
+                  const idMatch = childId.match(/product-(\d{8,})/);
+                  if (idMatch) {
+                    barcode = idMatch[1];
+                  }
+                }
+              });
+            }
+            
+            // 4. Check in onclick or other event attributes
+            if (!barcode) {
+              const eventAttrs = ['onclick', 'onmousedown', 'data-onclick'];
+              eventAttrs.forEach(attr => {
+                if (!barcode) {
+                  const eventValue = element.getAttribute(attr);
+                  if (eventValue) {
+                    const eventMatch = eventValue.match(/(\d{8,})/);
+                    if (eventMatch) {
+                      barcode = eventMatch[1];
+                    }
+                  }
+                }
+              });
+            }
+          }
+          
+          product.barcode = barcode;
           
           // Only include products that have at least a name and price
           if (product.name && product.price) {
@@ -394,6 +568,26 @@ class RamiLevyScraper extends BaseScraper {
     });
     
     console.log(`📦 [Rami Levy] Extracted ${products.length} products from DOM`);
+    
+    // Debug: Log first few products with their IDs, barcodes, and attributes
+    console.log(`🔍 [Rami Levy] Debugging first 3 products with attributes:`);
+    products.slice(0, 3).forEach((product, index) => {
+      console.log(`  ${index + 1}. Name: ${product.name?.substring(0, 30) || 'Unknown'}...`);
+      console.log(`     ID: ${product.id}`);
+      console.log(`     Barcode: ${product.barcode || 'null'}`);
+      console.log(`     Image: ${product.imageUrl || 'null'}`);
+      if (product.debugUrl) {
+        console.log(`     URL: ${product.debugUrl}`);
+      }
+      if (product.debugAttributes) {
+        console.log(`     Attributes:`, Object.keys(product.debugAttributes).slice(0, 5).map(key => `${key}="${product.debugAttributes[key]}"`));
+      }
+      if (product.debugImages) {
+        console.log(`     Found Images:`, product.debugImages.slice(0, 2));
+      }
+      console.log('');
+    });
+    
     return products;
   }
 
