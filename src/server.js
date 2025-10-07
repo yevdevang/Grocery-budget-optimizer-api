@@ -3,8 +3,20 @@ const config = require('./config/config');
 const storesRouter = require('./routes/stores');
 const cacheRouter = require('./routes/cache');
 const errorHandler = require('./middleware/errorHandler');
+const DatabaseService = require('./services/DatabaseService');
 
 const app = express();
+
+// Initialize MongoDB connection
+async function initializeDatabase() {
+  try {
+    await DatabaseService.connect();
+    console.log('🗄️  Database service initialized');
+  } catch (error) {
+    console.warn('⚠️  Database connection failed, continuing without MongoDB:', error.message);
+    console.warn('🔄  Server will work in scraping-only mode');
+  }
+}
 
 // Middleware
 app.use(express.json());
@@ -25,11 +37,13 @@ app.use((req, res, next) => {
 });
 
 // Routes
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const dbStats = await DatabaseService.getDatabaseStats();
   res.json({ 
     status: 'ok', 
     uptime: process.uptime(),
-    timestamp: new Date().toISOString() 
+    timestamp: new Date().toISOString(),
+    database: dbStats
   });
 });
 
@@ -72,6 +86,9 @@ const PORT = config.port;
 
 async function startServer() {
   try {
+    // Initialize database first
+    await initializeDatabase();
+    
     app.listen(PORT, () => {
       console.log('╔════════════════════════════════════════╗');
       console.log('║   🛒 Supermarket API Server           ║');
@@ -79,6 +96,7 @@ async function startServer() {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log(`📦 Cache TTL: ${config.cacheTTL}s`);
       console.log(`🌍 Environment: ${config.nodeEnv}`);
+      console.log(`🗄️  MongoDB: ${DatabaseService.connected ? '✅ Connected' : '❌ Disconnected'}`);
 
       
       console.log('\n📚 Available Endpoints:');
@@ -104,11 +122,13 @@ async function startServer() {
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
+  await DatabaseService.disconnect();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down gracefully...');
+  await DatabaseService.disconnect();
   process.exit(0);
 });
 
