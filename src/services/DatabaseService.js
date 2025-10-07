@@ -80,18 +80,10 @@ class DatabaseService {
         price: product.price,
         store: storeName,
         category: product.category, // Keep Hebrew category as-is
-        brand: product.brand,
         barcode: product.barcode,
-        url: product.url,
         image_url: product.imageUrl || product.image_url, // Handle both field names
         in_stock: product.in_stock !== undefined ? product.in_stock : true,
-        scraped_at: new Date(),
-        description: product.description,
-        unit: product.unit,
-        weight: product.weight,
-        original_price: product.original_price,
-        is_on_sale: product.is_on_sale || false,
-        sale_end_date: product.sale_end_date
+        scraped_at: new Date()
       }));
 
       // Remove duplicates by name (case-insensitive and trim whitespace)

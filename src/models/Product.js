@@ -22,13 +22,11 @@ const productSchema = new mongoose.Schema({
     type: String,
     index: true
   },
-  brand: String,
   barcode: {
     type: String,
     index: true,
     sparse: true // Allow null values but index non-null ones
   },
-  url: String,
   image_url: String,
   in_stock: { 
     type: Boolean, 
@@ -43,17 +41,7 @@ const productSchema = new mongoose.Schema({
   updated_at: { 
     type: Date, 
     default: Date.now 
-  },
-  // Additional metadata
-  description: String,
-  unit: String, // e.g., "kg", "liter", "piece"
-  weight: Number,
-  original_price: Number, // For sale tracking
-  is_on_sale: { 
-    type: Boolean, 
-    default: false 
-  },
-  sale_end_date: Date
+  }
 }, {
   timestamps: true, // Automatically manage createdAt and updatedAt
   collection: function() {
@@ -63,7 +51,7 @@ const productSchema = new mongoose.Schema({
 });
 
 // Create indexes for better performance
-productSchema.index({ name: 'text', brand: 'text', description: 'text' }); // Text search
+productSchema.index({ name: 'text' }); // Text search on name only
 productSchema.index({ store: 1, category: 1 }); // Compound index for categories
 productSchema.index({ store: 1, price: 1 }); // Price sorting
 productSchema.index({ scraped_at: -1 }); // Recent products first

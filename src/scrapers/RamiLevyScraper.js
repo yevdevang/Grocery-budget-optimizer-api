@@ -62,9 +62,8 @@ class RamiLevyScraper extends BaseScraper {
       let filteredProducts = products;
       if (searchQuery && searchQuery.trim().length > 0) {
         const query = searchQuery.toLowerCase();
-        filteredProducts = products.filter(product => 
-          product.name.toLowerCase().includes(query) ||
-          (product.description && product.description.toLowerCase().includes(query))
+        return this.products.filter(product => 
+          (product.name && product.name.toLowerCase().includes(query))
         );
         console.log(`🔍 [Rami Levy] Filtered ${products.length} → ${filteredProducts.length} products for query: "${searchQuery}"`);
       }
@@ -271,6 +270,25 @@ class RamiLevyScraper extends BaseScraper {
     const products = await this.page.evaluate(() => {
       const productElements = [];
       
+      // Move cleanProductName inside evaluate function
+      function cleanProductName(text) {
+        if (!text) return '';
+        
+        return text
+          // Remove extra whitespace and normalize spaces
+          .replace(/\s+/g, ' ')
+          // Remove line breaks and tabs
+          .replace(/[\n\r\t]/g, ' ')
+          // Remove multiple spaces
+          .replace(/\s{2,}/g, ' ')
+          // Trim leading and trailing spaces
+          .trim()
+          // Remove trailing dots or commas if they exist
+          .replace(/[.,]+$/, '')
+          // Limit length to reasonable product name length
+          .substring(0, 100);
+      }
+      
       // Based on the HTML structure, target div[role="button"] with id starting with "product-"
       const selectors = [
         '.swiper-slide',                       // Primary: swiper slides that contain products
@@ -329,7 +347,8 @@ class RamiLevyScraper extends BaseScraper {
           for (const nameSelector of nameSelectors) {
             const nameEl = element.querySelector(nameSelector);
             if (nameEl && nameEl.textContent.trim()) {
-              product.name = nameEl.textContent.trim();
+              // Clean and format the product name
+              product.name = cleanProductName(nameEl.textContent);
               break;
             }
           }
@@ -338,7 +357,7 @@ class RamiLevyScraper extends BaseScraper {
           if (!product.name) {
             const textContent = element.textContent?.trim();
             if (textContent && textContent.length > 3 && textContent.length < 100) {
-              product.name = textContent.split('\n')[0].trim();
+              product.name = cleanProductName(textContent.split('\n')[0]);
             }
           }
           
@@ -422,15 +441,6 @@ class RamiLevyScraper extends BaseScraper {
           }
           
           product.imageUrl = imageUrl;
-          
-          // Product URL
-          const linkEl = element.querySelector('a');
-          if (linkEl) {
-            const href = linkEl.getAttribute('href');
-            if (href) {
-              product.url = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
-            }
-          }
           
           // Extract ID from various attributes - check for button with barcode first
           let productId = null;
@@ -622,10 +632,7 @@ class RamiLevyScraper extends BaseScraper {
               name: item.name || item.title || item.productName,
               price: item.price || item.cost || item.amount,
               imageUrl: item.image || item.imageUrl || item.img,
-              url: item.url || item.link,
               barcode: item.barcode || item.ean || item.gtin,
-              description: item.description || item.desc,
-              brand: item.brand || item.manufacturer,
               category: item.category || item.categoryName,
               source: 'api'
             };
@@ -683,6 +690,24 @@ class RamiLevyScraper extends BaseScraper {
     
     console.log(`🔄 [Rami Levy] Merged into ${mergedProducts.length} total products`);
     return mergedProducts;
+  }
+
+  cleanProductName(text) {
+    if (!text) return '';
+    
+    return text
+      // Remove extra whitespace and normalize spaces
+      .replace(/\s+/g, ' ')
+      // Remove line breaks and tabs
+      .replace(/[\n\r\t]/g, ' ')
+      // Remove multiple spaces
+      .replace(/\s{2,}/g, ' ')
+      // Trim leading and trailing spaces
+      .trim()
+      // Remove trailing dots or commas if they exist
+      .replace(/[.,]+$/, '')
+      // Limit length to reasonable product name length
+      .substring(0, 100);
   }
 
   async delay(ms) {
