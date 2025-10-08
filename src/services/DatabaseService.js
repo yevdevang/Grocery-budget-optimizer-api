@@ -149,7 +149,7 @@ class DatabaseService {
       let query = { store: store.toLowerCase() };
       
       if (search) {
-        // Enhanced search to support both Hebrew and English
+        // Enhanced search to support both Hebrew and English, plus barcode
         query.$or = [
           { 'name-HE': { $regex: search, $options: 'i' } },
           { 'name-EN': { $regex: search, $options: 'i' } },
@@ -157,7 +157,8 @@ class DatabaseService {
           { brand: { $regex: search, $options: 'i' } },
           { 'brand-HE': { $regex: search, $options: 'i' } },
           { 'brand-EN': { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } }
+          { description: { $regex: search, $options: 'i' } },
+          { barcode: search } // Exact barcode match (string)
         ];
       }
       

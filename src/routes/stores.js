@@ -170,87 +170,83 @@ router.get('/rami-levy/products', async (req, res) => {
   }
 });
 
-// Search for a specific product by barcode or name - MongoDB integrated
+// Search for a specific product by barcode or name - DATABASE ONLY (no scraping)
 router.get('/rami-levy/products/:barcode', async (req, res) => {
   try {
     const { barcode } = req.params;
-    const { search, source = 'auto' } = req.query;
+    const { search } = req.query;
     
     // Use search term if provided, otherwise use barcode
     const searchTerm = search || barcode;
     
-    console.log(`🔍 [Rami Levy] Searching for: ${searchTerm}, source: ${source}`);
+    console.log(`🔍 [Rami Levy] Database-only search for: ${searchTerm}`);
     
-    // Try database first
-    if (source !== 'scrape' && DatabaseService.connected) {
-      try {
-        const dbResult = await DatabaseService.getProducts('rami-levy', {
-          search: searchTerm,
-          limit: 10
-        });
-
-        if (dbResult.products.length > 0) {
-          console.log(`✅ [Rami Levy] Found ${dbResult.products.length} products in database`);
-          
-          return res.json({
-            success: true,
-            store: 'Rami Levy',
-            searchTerm,
-            source: 'database',
-            exactMatches: dbResult.products.length,
-            products: dbResult.products,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (dbError) {
-        console.log(`⚠️  [Rami Levy] Database search failed:`, dbError.message);
-      }
+    // Check if database is connected
+    if (!DatabaseService.connected) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database not connected',
+        message: 'Barcode search requires database connection. Please ensure MongoDB is running.',
+        timestamp: new Date().toISOString()
+      });
     }
     
-    // Fall back to scraping
-    console.log(`🕷️  [Rami Levy] Scraping for: ${searchTerm}`);
-    const scraper = new RamiLevyScraper();
-    await scraper.init();
+    // Check cache first
+    const cacheKey = `rami-levy-barcode-${searchTerm}`;
+    const cached = cache.get(cacheKey);
     
+    if (cached) {
+      console.log('📦 [Rami Levy] Returning cached database result');
+      return res.json({
+        ...cached,
+        cached: true
+      });
+    }
+    
+    // Search database only - NO SCRAPING
     try {
-      let products = await scraper.scrape(searchTerm, null, 10); // Small scroll limit for specific search
+      const dbResult = await DatabaseService.getProducts('rami-levy', {
+        search: searchTerm,
+        limit: 10
+      });
 
-      // Filter for products with prices
-      products = products.filter(product => product.price && typeof product.price === 'number' && product.price > 0);
-
-      // Save to database if connected
-      if (DatabaseService.connected && products.length > 0) {
-        try {
-          await DatabaseService.saveProducts(products, 'rami-levy');
-          console.log(`✅ [Rami Levy] Saved search results to database`);
-        } catch (saveError) {
-          console.error(`❌ [Rami Levy] Failed to save search results:`, saveError.message);
-        }
-      }
-
-      // Find exact matches first
-      const exactMatches = products.filter(product => 
-        product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (product.barcode && product.barcode === searchTerm)
-      );
-
-      res.json({
+      const response = {
         success: true,
         store: 'Rami Levy',
         searchTerm,
-        source: 'scraping',
-        exactMatches: exactMatches.length,
-        products: exactMatches.length > 0 ? exactMatches.slice(0, 10) : products.slice(0, 10),
-        savedToDatabase: DatabaseService.connected,
+        source: 'database',
+        exactMatches: dbResult.products.length,
+        products: dbResult.products,
+        message: dbResult.products.length === 0 ? 
+          'Product not found in database. Use the main products endpoint to populate database first.' : 
+          undefined,
+        cached: false,
+        timestamp: new Date().toISOString()
+      };
+
+      // Cache the result
+      cache.set(cacheKey, response);
+
+      if (dbResult.products.length > 0) {
+        console.log(`✅ [Rami Levy] Found ${dbResult.products.length} products in database`);
+      } else {
+        console.log(`ℹ️  [Rami Levy] No products found in database for: ${searchTerm}`);
+      }
+      
+      return res.json(response);
+
+    } catch (dbError) {
+      console.log(`❌ [Rami Levy] Database search failed:`, dbError.message);
+      return res.status(500).json({
+        success: false,
+        error: 'Database search failed',
+        details: dbError.message,
         timestamp: new Date().toISOString()
       });
-
-    } finally {
-      await scraper.close();
     }
 
   } catch (error) {
-    console.error('❌ [Rami Levy] Search error:', error);
+    console.error('❌ [Rami Levy] Barcode search error:', error);
     res.status(500).json({
       success: false,
       error: error.message,
