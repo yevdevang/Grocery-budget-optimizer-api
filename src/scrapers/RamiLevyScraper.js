@@ -62,8 +62,9 @@ class RamiLevyScraper extends BaseScraper {
       let filteredProducts = products;
       if (searchQuery && searchQuery.trim().length > 0) {
         const query = searchQuery.toLowerCase();
-        return this.products.filter(product => 
-          (product.name && product.name.toLowerCase().includes(query))
+        filteredProducts = products.filter(product => 
+          (product.name && product.name.toLowerCase().includes(query)) ||
+          (product.barcode && product.barcode === searchQuery)
         );
         console.log(`🔍 [Rami Levy] Filtered ${products.length} → ${filteredProducts.length} products for query: "${searchQuery}"`);
       }
@@ -562,7 +563,8 @@ class RamiLevyScraper extends BaseScraper {
             }
           }
           
-          product.barcode = barcode;
+          // Ensure barcode is stored as string
+          product.barcode = barcode ? String(barcode) : null;
           
           // Only include products that have at least a name and price
           if (product.name && product.price) {
